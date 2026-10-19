@@ -145,7 +145,7 @@
   <section id="screen-register">
     <div class="card">
       <h1>Reward Trip Spin Wheel</h1>
-      <p class="sub">Silakan isi data berikut sebelum memutar roda. Setiap pegawai hanya memiliki satu kali kesempatan.</p>
+      <p class="sub">Silakan isi data berikut sebelum memutar roda. Hanya pegawai terdaftar yang dapat memutar roda.</p>
       <form id="form" novalidate>
         <div class="field">
           <label for="code">Kode Pegawai</label>
@@ -175,7 +175,7 @@
   <section id="screen-wheel">
     <div class="card stage">
       <h1>Putar Roda Reward</h1>
-      <p class="sub" style="text-align:center">Tekan tombol SPIN untuk mengundi reward trip Anda.</p>
+      <p class="sub" style="text-align:center" id="chance"></p>
       <div class="wheel-wrap">
         <div class="pointer"></div>
         <canvas id="wheel"></canvas>
@@ -195,7 +195,7 @@
 <!-- Hasil -->
 <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="r-dest">
   <div class="card modal">
-    <div class="eyebrow">Selamat, Anda mendapatkan</div>
+    <div class="eyebrow" id="r-eyebrow">Selamat, Anda mendapatkan</div>
     <h2 id="r-dest"></h2>
     <div class="type" id="r-type"></div>
     <div class="meta">
@@ -250,7 +250,18 @@
     SLICES = first.concat(first.map(function (s) { return { dest: s.dest, type: s.type }; }));
   })();
 
-  var STORE_KEY = 'rewardTripSpinResults.v1';
+  // Akun terdaftar: kode pegawai -> branch + hasil tiap kesempatan (berurutan)
+  var ACCOUNTS = {
+    'DANIEL280493-TJ-BSD': {
+      branch: 'BSD',
+      chances: [
+        { dest: 'Vietnam', type: 'Single' },
+        { dest: 'Japan', type: 'Single' }
+      ]
+    }
+  };
+
+  var STORE_KEY = 'rewardTripSpinResults.v2';
   var $ = function (id) { return document.getElementById(id); };
   var fmt = function (n) { return 'Rp ' + n.toLocaleString('id-ID'); };
 
@@ -262,6 +273,7 @@
   }
 
   var employee = null;
+  var results = [];
   var rotation = 0;
   var spinning = false;
 
@@ -343,7 +355,12 @@
     spinning = true;
     setSpinUI(false);
 
-    var winner = randomInt(N);
+    var planned = employee.account.chances[results.length];
+    var candidates = [];
+    SLICES.forEach(function (sl, i) {
+      if (sl.dest === planned.dest && sl.type === planned.type) candidates.push(i);
+    });
+    var winner = candidates[randomInt(candidates.length)];
     var twoPi = Math.PI * 2;
     // posisi tengah potongan ke-winner harus tepat di bawah pointer (atas)
     var jitter = (Math.random() - 0.5) * ARC * 0.7;
@@ -393,14 +410,31 @@
       dest: slice.dest, type: slice.type,
       at: now.toISOString()
     };
+    record.chance = results.length + 1;
+    results.push(record);
     var store = loadStore();
-    store[employee.code.toUpperCase()] = record;
+    store[employee.code] = results;
     saveStore(store);
+    updateChanceUI();
     showResult(record);
+  }
+
+  function chancesLeft() {
+    return employee.account.chances.length - results.length;
+  }
+
+  function updateChanceUI() {
+    var total = employee.account.chances.length;
+    $('chance').textContent = chancesLeft() > 0
+      ? 'Kesempatan ' + (results.length + 1) + ' dari ' + total + ' \u2014 tekan SPIN untuk mengundi reward trip Anda.'
+      : 'Seluruh ' + total + ' kesempatan telah digunakan.';
+    setSpinUI(chancesLeft() > 0);
   }
 
   function showResult(r) {
     var plan = PLANS[r.type];
+    $('r-eyebrow').textContent = 'Selamat, kesempatan ke-' + r.chance + ' Anda mendapatkan';
+    $('close').textContent = chancesLeft() > 0 ? 'Lanjut ke Kesempatan ke-' + (results.length + 1) : 'Selesai';
     $('r-dest').textContent = r.dest;
     $('r-type').textContent = r.type + ' Trip';
     $('r-code').textContent = r.code;
@@ -433,21 +467,23 @@
       err.textContent = 'Silakan pilih office branch.';
       return;
     }
+    var key = code.toUpperCase();
+    var account = ACCOUNTS[key];
+    if (!account || account.branch !== branch) {
+      err.textContent = 'Kode pegawai atau office branch tidak terdaftar.';
+      return;
+    }
     err.textContent = '';
-    employee = { code: code.toUpperCase(), branch: branch };
+    employee = { code: key, branch: branch, account: account };
+    results = loadStore()[key] || [];
 
-    var prev = loadStore()[employee.code];
     $('who').textContent = employee.code + ' · ' + employee.branch;
     $('screen-register').style.display = 'none';
     $('screen-wheel').style.display = 'block';
     sizeCanvas();
 
-    if (prev) {
-      setSpinUI(false);
-      showResult(prev);
-    } else {
-      setSpinUI(true);
-    }
+    updateChanceUI();
+    if (results.length) showResult(results[results.length - 1]);
   });
 
   $('spin').addEventListener('click', spin);
