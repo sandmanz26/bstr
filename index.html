@@ -215,7 +215,7 @@
     <div class="values">
       <div class="value"><small>Accommodation</small><strong id="r-acc"></strong></div>
       <div class="value"><small>Food Reimbursement</small><strong id="r-food"></strong></div>
-      <div class="value wide"><small>Convert to Cash <span>(70% dari total reward)</span></small><strong id="r-cash"></strong></div>
+      <div class="value wide"><small>Convert to Cash <span>(55% dari total reward)</span></small><strong id="r-cash"></strong></div>
     </div>
     <p class="terms-title">Ketentuan</p>
     <ol class="terms" id="r-terms"></ol>
@@ -250,16 +250,20 @@
   };
 
   var VALID_MONTHS = 4;
-  var CASH_RATE = 0.7;
+  var CASH_RATE = 0.55;
 
   var TERMS = [
     'Tidak bisa ditukar, atau digantikan, dan tidak boleh dialihpindahkan kepemilikannya.',
     'Maksimal pemakaian adalah ' + VALID_MONTHS + ' bulan sejak mendapatkan reward ini.',
     'Sisa dari reward tidak bisa disimpan.',
     'Segala invoice / nota wajib disimpan.',
-    'Accommodation mencakup hotel, pesawat, dan transport.',
+    'Accommodation mencakup hotel, pesawat, transport, dan biaya visa.',
     'Food Reimbursement mencakup makan dan belanja.',
-    'Reward dapat di-convert to cash dengan formula 70% dari total nilai reward (Accommodation + Food Reimbursement).',
+    'Tidak ada batasan lama menginap selama masih dalam masa pemakaian. Apabila ada kebutuhan penambahan durasi, biaya ditanggung oleh pihak pemenang.',
+    'Apabila total accommodation kurang dari budget yang dianggarkan, maka reward tidak dapat dicairkan.',
+    'Budget lain diperbolehkan digunakan asalkan sudah disetujui oleh accounting dari branch terkait.',
+    'Semua biaya hanya dapat digunakan di negara terkait (kecuali biaya visa). Biaya transport dari lokasi saat ini menuju bandara tidak termasuk.',
+    'Reward dapat di-convert to cash dengan formula ' + Math.round(CASH_RATE * 100) + '% dari total nilai reward (Accommodation + Food Reimbursement), sebagai pengganti pemakaian reward untuk trip.',
     'Bukti accommodation (transport dan hotel) wajib dilampirkan setelah trip dalam bentuk PDF yang terformat.'
   ];
 
@@ -574,7 +578,7 @@
     var rows = [
       ['Accommodation', fmt(plan.accommodation)],
       ['Food Reimbursement', fmt(plan.food)],
-      ['Convert to Cash (70% dari total reward)', fmt(Math.round(totalOf(r.type) * CASH_RATE))]
+      ['Convert to Cash (55% dari total reward)', fmt(Math.round(totalOf(r.type) * CASH_RATE))]
     ];
     rows.forEach(function (row) {
       doc.setFontSize(10); doc.setTextColor(91, 102, 120); doc.text(row[0], M, y);
