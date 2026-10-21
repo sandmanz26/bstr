@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Action tidak dikenal.' });
   } catch (e) {
     console.error(e);
-    const msg = e instanceof SetupError ? e.message : 'Server error. Coba lagi.';
+    const msg = e instanceof SetupError ? e.message : 'Server error: ' + (e && e.message ? e.message : 'coba lagi.');
     return res.status(500).json({ error: msg });
   }
 }
