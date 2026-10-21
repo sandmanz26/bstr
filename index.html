@@ -277,18 +277,6 @@
     SLICES = first.concat(first.map(function (s) { return { dest: s.dest, type: s.type }; }));
   })();
 
-  // Akun terdaftar: kode pegawai -> branch + hasil tiap kesempatan (berurutan)
-  var ACCOUNTS = {
-    'DANIEL280493-TJ-BSD': {
-      branch: 'BSD',
-      chances: [
-        { dest: 'Vietnam', type: 'Single' },
-        { dest: 'Japan', type: 'Single' }
-      ]
-    }
-  };
-
-  var STORE_KEY = 'rewardTripSpinResults.v2';
   var $ = function (id) { return document.getElementById(id); };
   var fmt = function (n) { return 'Rp ' + n.toLocaleString('id-ID'); };
 
@@ -304,21 +292,18 @@
   var fmtDate = function (d) { return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }); };
   var totalOf = function (type) { return PLANS[type].accommodation + PLANS[type].food; };
 
-  function loadStore() {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; }
+  function api(action) {
+    return fetch('/api/spin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, code: employee.code, branch: employee.branch })
+    }).then(function (r) {
+      return r.json().then(function (d) {
+        if (!r.ok) { var e = new Error(d.error || 'Terjadi kesalahan.'); e.data = d; throw e; }
+        return d;
+      });
+    });
   }
-  function saveStore(o) {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); } catch (e) { /* abaikan */ }
-  }
-
-  // Reset: /__refresh (lihat __refresh/index.html), atau ?__refresh / #__refresh
-  (function () {
-    var l = window.location;
-    if (/__refresh\/?$/.test(l.pathname) || /__refresh/.test(l.search + l.hash)) {
-      try { localStorage.removeItem(STORE_KEY); } catch (e) { /* abaikan */ }
-      history.replaceState(null, '', l.pathname.replace(/__refresh\/?$/, ''));
-    }
-  })();
 
   var employee = null;
   var results = [];
@@ -410,13 +395,22 @@
     if (spinning || !employee) return;
     spinning = true;
     setSpinUI(false);
-
-    var planned = employee.account.chances[results.length];
-    var candidates = [];
-    SLICES.forEach(function (sl, i) {
-      if (sl.dest === planned.dest && sl.type === planned.type) candidates.push(i);
+    api('spin').then(function (d) {
+      var rec = d.record;
+      var candidates = [];
+      SLICES.forEach(function (sl, i) {
+        if (sl.dest === rec.dest && sl.type === rec.type) candidates.push(i);
+      });
+      animate(candidates[randomInt(candidates.length)], d);
+    }).catch(function (e) {
+      spinning = false;
+      if (e.data && e.data.results) { results = e.data.results; }
+      $('chance').textContent = e.message;
+      setSpinUI(false);
     });
-    var winner = candidates[randomInt(candidates.length)];
+  }
+
+  function animate(winner, data) {
     var twoPi = Math.PI * 2;
     // posisi tengah potongan ke-winner harus tepat di bawah pointer (atas)
     var jitter = (Math.random() - 0.5) * ARC * 0.7;
@@ -438,7 +432,9 @@
         requestAnimationFrame(frame);
       } else {
         spinning = false;
-        finish(SLICES[winner]);
+        results = data.results;
+        updateChanceUI();
+        showResult(data.record);
       }
     }
     requestAnimationFrame(frame);
@@ -459,28 +455,12 @@
   }
 
   /* ---------- Result ---------- */
-  function finish(slice) {
-    var now = new Date();
-    var record = {
-      code: employee.code, branch: employee.branch,
-      dest: slice.dest, type: slice.type,
-      at: now.toISOString()
-    };
-    record.chance = results.length + 1;
-    results.push(record);
-    var store = loadStore();
-    store[employee.code] = results;
-    saveStore(store);
-    updateChanceUI();
-    showResult(record);
-  }
-
   function chancesLeft() {
-    return employee.account.chances.length - results.length;
+    return employee.total - results.length;
   }
 
   function updateChanceUI() {
-    var total = employee.account.chances.length;
+    var total = employee.total;
     $('chance').textContent = chancesLeft() > 0
       ? 'Kesempatan ' + (results.length + 1) + ' dari ' + total + ' \u2014 tekan SPIN untuk mengundi reward trip Anda.'
       : 'Seluruh ' + total + ' kesempatan telah digunakan.';
@@ -536,22 +516,23 @@
       return;
     }
     var key = code.toUpperCase();
-    var account = ACCOUNTS[key];
-    if (!account || account.branch !== branch) {
-      err.textContent = 'Kode pegawai atau office branch tidak terdaftar.';
-      return;
-    }
     err.textContent = '';
-    employee = { code: key, branch: branch, account: account };
-    results = loadStore()[key] || [];
-
-    $('who').textContent = employee.code + ' · ' + employee.branch;
-    $('screen-register').style.display = 'none';
-    $('screen-wheel').style.display = 'block';
-    sizeCanvas();
-
-    updateChanceUI();
-    if (results.length) showResult(results[results.length - 1]);
+    employee = { code: key, branch: branch, total: 0 };
+    var btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    api('login').then(function (d) {
+      employee.total = d.total;
+      results = d.results;
+      $('who').textContent = employee.code + ' \u00b7 ' + employee.branch;
+      $('screen-register').style.display = 'none';
+      $('screen-wheel').style.display = 'block';
+      sizeCanvas();
+      updateChanceUI();
+      if (results.length) showResult(results[results.length - 1]);
+    }).catch(function (e2) {
+      employee = null;
+      err.textContent = e2.message;
+    }).then(function () { btn.disabled = false; });
   });
 
   function downloadPdf() {

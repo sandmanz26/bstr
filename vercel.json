@@ -1,0 +1,3 @@
+{
+  "rewrites": [{ "source": "/__refresh", "destination": "/api/refresh" }]
+}
