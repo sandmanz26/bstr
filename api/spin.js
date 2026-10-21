@@ -1,4 +1,4 @@
-import { ACCOUNTS, readLog, writeLog, resultsFor, sanitize } from './_lib.js';
+import { SetupError, ACCOUNTS, readLog, writeLog, resultsFor, sanitize } from './_lib.js';
 
 // POST { action: 'login' | 'spin', code, branch }
 export default async function handler(req, res) {
@@ -36,6 +36,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Action tidak dikenal.' });
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ error: 'Server error. Coba lagi.' });
+    const msg = e instanceof SetupError ? e.message : 'Server error. Coba lagi.';
+    return res.status(500).json({ error: msg });
   }
 }

@@ -19,7 +19,16 @@ const LOCAL = process.env.LOCAL_STORE_FILE; // hanya untuk dev lokal
 // Format file, satu baris per kejadian:
 //   2026-10-21T04:55:00.000Z|KODE|BRANCH|1|Vietnam|Single
 //   2026-10-21T05:10:00.000Z|KODE|RESET
+export class SetupError extends Error {}
+
+function assertStore() {
+  if (!LOCAL && !process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new SetupError('Penyimpanan belum tersambung: BLOB_READ_WRITE_TOKEN tidak ditemukan. Sambungkan Blob store ke project (Production) lalu redeploy.');
+  }
+}
+
 export async function readLog() {
+  assertStore();
   if (LOCAL) return fs.readFile(LOCAL, 'utf8').catch(() => '');
   const { blobs } = await list({ prefix: FILE });
   const b = blobs.find((x) => x.pathname === FILE);
@@ -29,6 +38,7 @@ export async function readLog() {
 }
 
 export async function writeLog(text) {
+  assertStore();
   if (LOCAL) return fs.writeFile(LOCAL, text);
   await put(FILE, text, {
     access: 'public',

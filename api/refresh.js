@@ -1,4 +1,4 @@
-import { readLog, writeLog, sanitize } from './_lib.js';
+import { SetupError, readLog, writeLog, sanitize } from './_lib.js';
 
 // GET /__refresh?token=<REFRESH_TOKEN>&code=<KODE>   -> reset satu pegawai
 // GET /__refresh?token=<REFRESH_TOKEN>&code=ALL      -> reset semua pegawai
@@ -11,7 +11,11 @@ export default async function handler(req, res) {
   }
   if (!code) return res.status(400).send('Tambahkan ?code=KODE_PEGAWAI atau ?code=ALL');
 
-  const log = await readLog();
+  let log;
+  try { log = await readLog(); } catch (e) {
+    console.error(e);
+    return res.status(500).send(e instanceof SetupError ? e.message : 'Server error.');
+  }
   const now = new Date().toISOString();
   if (String(code).toUpperCase() === 'ALL') {
     const codes = [...new Set(log.split('\n').map((l) => l.split('|')[1]).filter(Boolean))];
