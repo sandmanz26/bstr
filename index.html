@@ -115,6 +115,13 @@
   .actions { display: flex; gap: 10px; }
   .actions button { flex: 1; }
 
+  .value.wide { grid-column: 1 / -1; }
+  .value.wide small span { text-transform: none; letter-spacing: 0; }
+  .note { font-size: 13px; line-height: 1.5; padding: 10px 12px; border-radius: 8px; margin-bottom: 18px; background: #fbf6ea; border: 1px solid #ecdcb4; color: #5f4a1c; }
+  .note.hidden { display: none; }
+  .confirm { width: min(100%, 420px); padding: 28px; }
+  .confirm h3 { margin: 0 0 10px; font-size: 18px; }
+  .confirm p { margin: 0 0 22px; font-size: 14px; line-height: 1.6; color: #26334a; }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding-bottom: 24px; }
 
   @media (max-width: 520px) {
@@ -202,20 +209,35 @@
       <span>Kode Pegawai: <b id="r-code"></b></span>
       <span>Branch: <b id="r-branch"></b></span>
       <span>Tanggal: <b id="r-date"></b></span>
+      <span>Berlaku hingga: <b id="r-exp"></b></span>
     </div>
+    <div class="note hidden" id="r-note"></div>
     <div class="values">
       <div class="value"><small>Accommodation</small><strong id="r-acc"></strong></div>
       <div class="value"><small>Food Reimbursement</small><strong id="r-food"></strong></div>
+      <div class="value wide"><small>Convert to Cash <span>(70% dari total reward)</span></small><strong id="r-cash"></strong></div>
     </div>
     <p class="terms-title">Ketentuan</p>
     <ol class="terms" id="r-terms"></ol>
     <div class="actions">
-      <button class="btn-ghost" id="print">Cetak / Simpan PDF</button>
+      <button class="btn-ghost" id="pdf">Unduh PDF</button>
       <button class="btn-primary" id="close">Selesai</button>
     </div>
   </div>
 </div>
 
+<div class="overlay" id="confirm" role="alertdialog" aria-modal="true" aria-labelledby="c-title">
+  <div class="card confirm">
+    <h3 id="c-title">Konfirmasi Spin Kedua</h3>
+    <p id="c-text"></p>
+    <div class="actions">
+      <button class="btn-ghost" id="c-no">Batal</button>
+      <button class="btn-primary" id="c-yes">Ya, Putar Lagi</button>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/jspdf.umd.min.js"></script>
 <script>
 (function () {
   'use strict';
@@ -227,13 +249,18 @@
     Family: { accommodation: 14000000, food: 10000000 }
   };
 
+  var VALID_MONTHS = 4;
+  var CASH_RATE = 0.7;
+
   var TERMS = [
     'Tidak bisa ditukar, atau digantikan, dan tidak boleh dialihpindahkan kepemilikannya.',
-    'Maksimal pemakaian adalah 4 bulan sejak mendapatkan reward ini.',
+    'Maksimal pemakaian adalah ' + VALID_MONTHS + ' bulan sejak mendapatkan reward ini.',
     'Sisa dari reward tidak bisa disimpan.',
     'Segala invoice / nota wajib disimpan.',
     'Accommodation mencakup hotel, pesawat, dan transport.',
-    'Food Reimbursement mencakup makan dan belanja.'
+    'Food Reimbursement mencakup makan dan belanja.',
+    'Reward dapat di-convert to cash dengan formula 70% dari total nilai reward (Accommodation + Food Reimbursement).',
+    'Bukti accommodation (transport dan hotel) wajib dilampirkan setelah trip dalam bentuk PDF yang terformat.'
   ];
 
   // 20 pieces: tiap kombinasi destinasi + tipe muncul 2x, selang-seling Single / Family
@@ -265,12 +292,33 @@
   var $ = function (id) { return document.getElementById(id); };
   var fmt = function (n) { return 'Rp ' + n.toLocaleString('id-ID'); };
 
+  function addMonths(iso, n) {
+    var d = new Date(iso);
+    var day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + n);
+    var last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, last));
+    return d;
+  }
+  var fmtDate = function (d) { return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }); };
+  var totalOf = function (type) { return PLANS[type].accommodation + PLANS[type].food; };
+
   function loadStore() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; }
   }
   function saveStore(o) {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); } catch (e) { /* abaikan */ }
   }
+
+  // Reset: /__refresh (lihat __refresh/index.html), atau ?__refresh / #__refresh
+  (function () {
+    var l = window.location;
+    if (/__refresh\/?$/.test(l.pathname) || /__refresh/.test(l.search + l.hash)) {
+      try { localStorage.removeItem(STORE_KEY); } catch (e) { /* abaikan */ }
+      history.replaceState(null, '', l.pathname.replace(/__refresh\/?$/, ''));
+    }
+  })();
 
   var employee = null;
   var results = [];
@@ -350,7 +398,15 @@
   /* ---------- Spin ---------- */
   function easeOut(t) { return 1 - Math.pow(1 - t, 4); }
 
-  function spin() {
+  function requestSpin() {
+    if (spinning || !employee || chancesLeft() <= 0) return;
+    if (results.length === 0) return doSpin();
+    var prev = results[results.length - 1];
+    $('c-text').textContent = 'Reward dari kesempatan pertama (' + prev.dest + ' \u2013 ' + prev.type + ' Trip) akan hangus dan tidak dapat dikembalikan. Kesempatan kedua adalah yang terakhir dan hasilnya mengikat. Lanjutkan?';
+    $('confirm').classList.add('open');
+  }
+
+  function doSpin() {
     if (spinning || !employee) return;
     spinning = true;
     setSpinUI(false);
@@ -434,12 +490,24 @@
   function showResult(r) {
     var plan = PLANS[r.type];
     $('r-eyebrow').textContent = 'Selamat, kesempatan ke-' + r.chance + ' Anda mendapatkan';
-    $('close').textContent = chancesLeft() > 0 ? 'Lanjut ke Kesempatan ke-' + (results.length + 1) : 'Selesai';
+    $('close').textContent = chancesLeft() > 0 ? 'Tutup' : 'Selesai';
+    var note = $('r-note');
+    if (results.length > 1) {
+      var first = results[0];
+      note.textContent = 'Reward kesempatan ke-1 (' + first.dest + ' \u2013 ' + first.type + ' Trip) telah hangus. Seluruh kesempatan sudah digunakan.';
+    } else if (chancesLeft() > 0) {
+      note.textContent = 'Anda masih memiliki 1 kesempatan. Jika Anda memutar kembali, reward ini akan hangus.';
+    } else {
+      note.textContent = '';
+    }
+    note.classList.toggle('hidden', !note.textContent);
     $('r-dest').textContent = r.dest;
     $('r-type').textContent = r.type + ' Trip';
     $('r-code').textContent = r.code;
     $('r-branch').textContent = r.branch;
-    $('r-date').textContent = new Date(r.at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' });
+    $('r-date').textContent = fmtDate(new Date(r.at));
+    $('r-exp').textContent = fmtDate(addMonths(r.at, VALID_MONTHS));
+    $('r-cash').textContent = fmt(Math.round(totalOf(r.type) * CASH_RATE));
     $('r-acc').textContent = fmt(plan.accommodation);
     $('r-food').textContent = fmt(plan.food);
     var ol = $('r-terms');
@@ -486,9 +554,82 @@
     if (results.length) showResult(results[results.length - 1]);
   });
 
-  $('spin').addEventListener('click', spin);
-  $('hub').addEventListener('click', function () { if (!$('hub').classList.contains('disabled')) spin(); });
-  $('print').addEventListener('click', function () { window.print(); });
+  function downloadPdf() {
+    var r = results[results.length - 1];
+    if (!r || !window.jspdf) return;
+    var doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    var W = 210, M = 20, y;
+    var plan = PLANS[r.type];
+
+    doc.setFillColor(20, 40, 75);
+    doc.rect(0, 0, W, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('REWARD TRIP PROGRAM', M, 18);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text('Bukti Reward Trip', W - M, 18, { align: 'right' });
+
+    doc.setTextColor(176, 141, 74); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text('SELAMAT, ANDA MENDAPATKAN', M, 46);
+    doc.setTextColor(15, 27, 45); doc.setFontSize(26);
+    doc.text(r.dest, M, 58);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(91, 102, 120);
+    doc.text(r.type + ' Trip', M, 66);
+
+    doc.setDrawColor(223, 228, 236); doc.line(M, 72, W - M, 72);
+    var meta = [
+      ['Kode Pegawai', r.code], ['Office Branch', r.branch],
+      ['Tanggal Reward', fmtDate(new Date(r.at))],
+      ['Berlaku Hingga', fmtDate(addMonths(r.at, VALID_MONTHS))]
+    ];
+    y = 80;
+    meta.forEach(function (m) {
+      doc.setFontSize(10); doc.setTextColor(91, 102, 120); doc.text(m[0], M, y);
+      doc.setTextColor(15, 27, 45); doc.setFont('helvetica', 'bold'); doc.text(m[1], M + 45, y);
+      doc.setFont('helvetica', 'normal'); y += 7;
+    });
+    doc.line(M, y, W - M, y); y += 10;
+
+    var rows = [
+      ['Accommodation', fmt(plan.accommodation)],
+      ['Food Reimbursement', fmt(plan.food)],
+      ['Convert to Cash (70% dari total reward)', fmt(Math.round(totalOf(r.type) * CASH_RATE))]
+    ];
+    rows.forEach(function (row) {
+      doc.setFontSize(10); doc.setTextColor(91, 102, 120); doc.text(row[0], M, y);
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(20, 40, 75);
+      doc.text(row[1], W - M, y, { align: 'right' });
+      doc.setFont('helvetica', 'normal'); y += 8;
+    });
+    y += 4;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(91, 102, 120);
+    doc.text('KETENTUAN', M, y); y += 7;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(38, 51, 74);
+    TERMS.forEach(function (t, i) {
+      var lines = doc.splitTextToSize(t, W - 2 * M - 8);
+      doc.text((i + 1) + '.', M, y);
+      doc.text(lines, M + 8, y);
+      y += lines.length * 5 + 2;
+    });
+
+    if (results.length > 1) {
+      y += 4;
+      doc.setFontSize(9); doc.setTextColor(95, 74, 28);
+      var f = results[0];
+      doc.text('Catatan: reward kesempatan ke-1 (' + f.dest + ' - ' + f.type + ' Trip) telah hangus.', M, y);
+    }
+
+    doc.setFontSize(8); doc.setTextColor(140, 148, 160);
+    doc.text('Dokumen ini dibuat otomatis oleh sistem Reward Trip Program.', M, 285);
+    doc.save('Reward-Trip-' + r.code + '.pdf');
+  }
+
+  $('spin').addEventListener('click', requestSpin);
+  $('hub').addEventListener('click', function () { if (!$('hub').classList.contains('disabled')) requestSpin(); });
+  $('c-no').addEventListener('click', function () { $('confirm').classList.remove('open'); });
+  $('c-yes').addEventListener('click', function () { $('confirm').classList.remove('open'); doSpin(); });
+  $('pdf').addEventListener('click', downloadPdf);
   $('close').addEventListener('click', function () { $('overlay').classList.remove('open'); });
   window.addEventListener('resize', function () { if (employee) sizeCanvas(); });
 })();
